@@ -26,9 +26,9 @@ renderer.domElement.addEventListener('click', () => {
     }
 });
 
-const roomWidth = 14;
-const roomDepth = 16;
-const roomHeight = 10;
+const roomWidth = 20;
+const roomDepth = 22;
+const roomHeight = 13;
 const wallColor = 0xffffff;
 const wallDividerColor = 0xf4f2ec;
 const warmLightColor = 0xffe2b2;
@@ -138,6 +138,61 @@ function createRoundedPrism(width, depth, height, radius, color) {
     return mesh;
 }
 
+function createBurntCementTextures(size = 512) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, size, size);
+    gradient.addColorStop(0, '#595959');
+    gradient.addColorStop(1, '#454545');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+
+    for (let i = 0; i < 30; i++) {
+        const radius = Math.random() * 80 + 30;
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const glow = ctx.createRadialGradient(x, y, 0, x, y, radius);
+        glow.addColorStop(0, 'rgba(100, 100, 100, 0.15)');
+        glow.addColorStop(1, 'rgba(100, 100, 100, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    for (let i = 0; i < 4000; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const color = Math.random() > 0.5 ? '#666666' : '#333333';
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.06;
+        ctx.fillRect(x, y, Math.random() * 3 + 1, Math.random() * 3 + 1);
+    }
+    
+    ctx.globalAlpha = 1.0;
+    const map = new THREE.CanvasTexture(canvas);
+    map.encoding = THREE.sRGBEncoding;
+
+    const bumpCanvas = document.createElement('canvas');
+    bumpCanvas.width = size;
+    bumpCanvas.height = size;
+    const bumpCtx = bumpCanvas.getContext('2d');
+    bumpCtx.fillStyle = 'rgb(128, 128, 128)';
+    bumpCtx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 4000; i++) {
+        const x = Math.random() * size;
+        const y = Math.random() * size;
+        const shade = 100 + Math.random() * 56;
+        bumpCtx.fillStyle = `rgba(${shade}, ${shade}, ${shade}, 0.2)`;
+        bumpCtx.fillRect(x, y, Math.random() * 3 + 1, Math.random() * 3 + 1);
+    }
+    const bump = new THREE.CanvasTexture(bumpCanvas);
+    
+    return { map, bump };
+}
+
 function createWallTextures() {
     const size = 512;
     const canvas = document.createElement('canvas');
@@ -241,9 +296,10 @@ function createCeilingTextures() {
     return { map, bump };
 }
 
-function createWallSurface(width, height, material, opening) {
+function createWallSurface(width, height, material, openings) {
     let geometry;
-    if (opening) {
+    if (openings) {
+        if (!Array.isArray(openings)) openings = [openings];
         const shape = new THREE.Shape();
         shape.moveTo(-width / 2, -height / 2);
         shape.lineTo(width / 2, -height / 2);
@@ -251,20 +307,37 @@ function createWallSurface(width, height, material, opening) {
         shape.lineTo(-width / 2, height / 2);
         shape.lineTo(-width / 2, -height / 2);
 
-        const hole = new THREE.Path();
-        const halfHoleWidth = opening.width / 2;
-        const halfHoleHeight = opening.height / 2;
-        hole.moveTo(opening.x - halfHoleWidth, opening.y - halfHoleHeight);
-        hole.lineTo(opening.x + halfHoleWidth, opening.y - halfHoleHeight);
-        hole.lineTo(opening.x + halfHoleWidth, opening.y + halfHoleHeight);
-        hole.lineTo(opening.x - halfHoleWidth, opening.y + halfHoleHeight);
-        hole.lineTo(opening.x - halfHoleWidth, opening.y - halfHoleHeight);
-        shape.holes.push(hole);
+        for (const opening of openings) {
+            const hole = new THREE.Path();
+            const halfHoleWidth = opening.width / 2;
+            const halfHoleHeight = opening.height / 2;
+            hole.moveTo(opening.x - halfHoleWidth, opening.y - halfHoleHeight);
+            hole.lineTo(opening.x + halfHoleWidth, opening.y - halfHoleHeight);
+            if (opening.arch) {
+                hole.lineTo(opening.x + halfHoleWidth, opening.y + halfHoleHeight - halfHoleWidth);
+                hole.absarc(opening.x, opening.y + halfHoleHeight - halfHoleWidth, halfHoleWidth, 0, Math.PI, false);
+                hole.lineTo(opening.x - halfHoleWidth, opening.y + halfHoleHeight - halfHoleWidth);
+            } else {
+                hole.lineTo(opening.x + halfHoleWidth, opening.y + halfHoleHeight);
+                hole.lineTo(opening.x - halfHoleWidth, opening.y + halfHoleHeight);
+            }
+            hole.lineTo(opening.x - halfHoleWidth, opening.y - halfHoleHeight);
+            shape.holes.push(hole);
+        }
 
         geometry = new THREE.ShapeGeometry(shape);
     } else {
         // High density vertices ("blocks") for better shadow mapping and light gradients
         geometry = new THREE.PlaneGeometry(width, height, Math.max(1, Math.floor(width * 4)), Math.max(1, Math.floor(height * 4)));
+
+    const uvs = geometry.attributes.uv;
+    if (uvs) {
+        const worldScaleX = 2.0;
+        const worldScaleY = 2.0;
+        for (let i = 0; i < uvs.count; i++) {
+            uvs.setXY(i, uvs.getX(i) * (width / worldScaleX), uvs.getY(i) * (height / worldScaleY));
+        }
+    }
     }
 
     // Material should be double-sided to block light from behind effectively
@@ -461,6 +534,96 @@ function createLaminatedWoodTextures() {
 }
 
 const laminatedWoodTextures = createLaminatedWoodTextures();
+
+function createArchedWindow(width, height) {
+    const group = new THREE.Group();
+    const frameMaterial = new THREE.MeshStandardMaterial({
+        color: 0x1a1a1a,
+        roughness: 0.5,
+        metalness: 0.8
+    });
+    const glassMaterial = new THREE.MeshStandardMaterial({
+        color: 0xaaaaaa,
+        roughness: 0.1,
+        metalness: 0.9,
+        transparent: true,
+        opacity: 0.4
+    });
+
+    const thickness = 0.12;
+    const depth = 0.14;
+    const radius = width / 2;
+    const rectHeight = height - radius;
+    
+    // Glass
+    const glassShape = new THREE.Shape();
+    glassShape.moveTo(-radius, -height / 2);
+    glassShape.lineTo(radius, -height / 2);
+    glassShape.lineTo(radius, rectHeight - height / 2);
+    glassShape.absarc(0, rectHeight - height / 2, radius, 0, Math.PI, false);
+    glassShape.lineTo(-radius, -height / 2);
+    
+    const glassGeo = new THREE.ShapeGeometry(glassShape);
+    const glass = new THREE.Mesh(glassGeo, glassMaterial);
+    group.add(glass);
+
+    // Frame (using edges of the shape via extrude or simple path)
+    const frameExtrudeSettings = { depth: depth, bevelEnabled: false };
+    const frameHole = new THREE.Path();
+    const innerRadius = radius - thickness;
+    const innerRectHeight = rectHeight - thickness;
+    frameHole.moveTo(-innerRadius, -height / 2 + thickness);
+    frameHole.lineTo(innerRadius, -height / 2 + thickness);
+    frameHole.lineTo(innerRadius, innerRectHeight - height/2 + thickness/2);
+    frameHole.absarc(0, innerRectHeight - height/2 + thickness/2, innerRadius, 0, Math.PI, false);
+    frameHole.lineTo(-innerRadius, -height / 2 + thickness);
+    
+    const frameShape = new THREE.Shape();
+    frameShape.moveTo(-radius, -height / 2);
+    frameShape.lineTo(radius, -height / 2);
+    frameShape.lineTo(radius, rectHeight - height / 2);
+    frameShape.absarc(0, rectHeight - height / 2, radius, 0, Math.PI, false);
+    frameShape.lineTo(-radius, -height / 2);
+    frameShape.holes.push(frameHole);
+
+    const frameGeo = new THREE.ExtrudeGeometry(frameShape, frameExtrudeSettings);
+    frameGeo.translate(0, 0, -depth / 2);
+    const frame = new THREE.Mesh(frameGeo, frameMaterial);
+    group.add(frame);
+
+    // Inner Grid (Mullions)
+    const barThickness = 0.04;
+    const archCenterY = rectHeight - height / 2;
+    // Horizontal bars
+    for (let i = 1; i <= Math.floor(height / 0.8); i++) {
+        const barY = -height / 2 + i * 0.8;
+        if (barY > height / 2 - 0.05) continue;
+        let barHalfWidth = innerRadius;
+        if (barY > archCenterY) {
+            const dy = barY - archCenterY;
+            if (dy < innerRadius) barHalfWidth = Math.sqrt(innerRadius * innerRadius - dy * dy);
+            else barHalfWidth = 0;
+        }
+        if (barHalfWidth > 0.05) {
+            const hBar = new THREE.Mesh(new THREE.BoxGeometry(barHalfWidth * 2, barThickness, depth - 0.02), frameMaterial);
+            hBar.position.set(0, barY, 0);
+            group.add(hBar);
+        }
+    }
+    // Vertical bars
+    for (let i = 1; i <= 3; i++) {
+        const barX = -innerRadius + i * (innerRadius * 2 / 4);
+        const dx = Math.abs(barX);
+        let barMaxY = archCenterY + Math.sqrt(innerRadius * innerRadius - dx * dx);
+        const barHeight = barMaxY - (-height / 2 + thickness);
+        const vBar = new THREE.Mesh(new THREE.BoxGeometry(barThickness, barHeight, depth - 0.02), frameMaterial);
+        vBar.position.set(barX, -height / 2 + thickness + barHeight / 2, 0);
+        group.add(vBar);
+    }
+
+    group.traverse(child => { if(child.isMesh) { child.castShadow = true; child.receiveShadow = true; } });
+    return group;
+}
 
 function createWindow(width, height, options = {}) {
     const {
@@ -664,26 +827,23 @@ scene.add(ceilingRoomFill);
 
 // Room geometry (simple boxes for demonstration - replace with Blender models)
 // Floor
-const textureLoader = new THREE.TextureLoader();
-const woodTexture = textureLoader.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg');
-const woodBump = textureLoader.load('https://threejs.org/examples/textures/hardwood2_bump.jpg');
-woodTexture.encoding = THREE.sRGBEncoding;
-woodTexture.wrapS = THREE.RepeatWrapping;
-woodTexture.wrapT = THREE.RepeatWrapping;
-woodTexture.repeat.set(4, 4);
-woodBump.wrapS = THREE.RepeatWrapping;
-woodBump.wrapT = THREE.RepeatWrapping;
-woodBump.repeat.set(4, 4);
-woodTexture.anisotropy = maxAnisotropy;
-woodBump.anisotropy = maxAnisotropy;
+const cementTextures = createBurntCementTextures(2048); // High res
+cementTextures.map.wrapS = THREE.MirroredRepeatWrapping;
+cementTextures.map.wrapT = THREE.MirroredRepeatWrapping;
+cementTextures.map.repeat.set(1, 1);
+cementTextures.bump.wrapS = THREE.MirroredRepeatWrapping;
+cementTextures.bump.wrapT = THREE.MirroredRepeatWrapping;
+cementTextures.bump.repeat.set(1, 1);
+cementTextures.map.anisotropy = maxAnisotropy;
+cementTextures.bump.anisotropy = maxAnisotropy;
 const floorGeometry = new THREE.PlaneGeometry(roomWidth, roomDepth);
 const floorMaterial = new THREE.MeshStandardMaterial({
-    map: woodTexture,
-    color: 0x6b4f35,
-    roughness: 0.72,
-    metalness: 0.05,
-    bumpMap: woodBump,
-    bumpScale: 0.12
+    map: cementTextures.map,
+    color: 0x999999,
+    roughness: 0.6,
+    metalness: 0.15,
+    bumpMap: cementTextures.bump,
+    bumpScale: 0.08
 });
 const floor = new THREE.Mesh(floorGeometry, floorMaterial);
 floor.rotation.x = -Math.PI / 2;
@@ -691,23 +851,32 @@ floor.receiveShadow = true;
 scene.add(floor);
 
 // Walls
-const wallTextures = createWallTextures();
-wallTextures.map.wrapS = THREE.RepeatWrapping;
-wallTextures.map.wrapT = THREE.RepeatWrapping;
-wallTextures.map.repeat.set(1.35, 1.35);
-wallTextures.bump.wrapS = THREE.RepeatWrapping;
-wallTextures.bump.wrapT = THREE.RepeatWrapping;
-wallTextures.bump.repeat.set(1.35, 1.35);
-wallTextures.map.anisotropy = maxAnisotropy;
-wallTextures.bump.anisotropy = maxAnisotropy;
+const textureLoader = new THREE.TextureLoader();
+const brickDiffuse = textureLoader.load('https://threejs.org/examples/textures/brick_diffuse.jpg');
+const brickBump = textureLoader.load('https://threejs.org/examples/textures/brick_bump.jpg');
+const brickRoughness = textureLoader.load('https://threejs.org/examples/textures/brick_roughness.jpg');
+
+brickDiffuse.wrapS = THREE.RepeatWrapping;
+brickDiffuse.wrapT = THREE.RepeatWrapping;
+brickDiffuse.repeat.set(1, 1);
+brickBump.wrapS = THREE.RepeatWrapping;
+brickBump.wrapT = THREE.RepeatWrapping;
+brickBump.repeat.set(1, 1);
+brickRoughness.wrapS = THREE.RepeatWrapping;
+brickRoughness.wrapT = THREE.RepeatWrapping;
+brickRoughness.repeat.set(1, 1);
+
+brickDiffuse.encoding = THREE.sRGBEncoding;
+brickDiffuse.anisotropy = maxAnisotropy;
+brickBump.anisotropy = maxAnisotropy;
+brickRoughness.anisotropy = maxAnisotropy;
 
 const wallMaterial = new THREE.MeshStandardMaterial({
-    map: wallTextures.map,
-    bumpMap: wallTextures.bump,
+    map: brickDiffuse,
+    bumpMap: brickBump,
     bumpScale: 0.05,
-    roughness: 0.93,
-    metalness: 0.0,
-    color: 0xf1ede6
+    roughnessMap: brickRoughness,
+    color: 0xcccccc
 });
 
 const windowSize = { width: 2.25, height: 1.75 };
@@ -768,55 +937,78 @@ rightWall.rotation.y = -Math.PI / 2;
 rightWall.position.x = roomWidth / 2;
 scene.add(rightWall);
 
-const doorOpening = { width: 3.2, height: 4.5, x: 0, y: 4.5 / 2 };
-const frontWall = createWallSurface(roomWidth, roomHeight, wallMaterial, doorOpening);
+const doorOpening = { width: 3.2, height: 5.5, x: 0, y: 5.5 / 2, arch: true };
+const archW1 = { width: 1.6, height: 3.0, x: -5, y: 1.0 + 3.0 / 2, arch: true };
+const archW2 = { width: 1.6, height: 3.0, x: 4.5, y: 1.0 + 3.0 / 2, arch: true };
+const archW3 = { width: 1.6, height: 3.0, x: 7.5, y: 1.0 + 3.0 / 2, arch: true };
+const frontWall = createWallSurface(roomWidth, roomHeight, wallMaterial, [doorOpening, archW1, archW2, archW3]);
 frontWall.rotation.y = Math.PI;
 frontWall.position.z = roomDepth / 2;
 scene.add(frontWall);
 
-function createShojiDoor(width, height) {
+// Arched transom over the main door
+const doorTransom = createArchedWindow(3.2, 1.6);
+doorTransom.position.set(0, 3.9 + 1.6 / 2, roomDepth / 2 - 0.05);
+doorTransom.rotation.y = Math.PI;
+scene.add(doorTransom);
+
+const aWin1 = createArchedWindow(archW1.width, archW1.height);
+aWin1.position.set(-archW1.x, archW1.y, roomDepth / 2 - 0.05); // inverted x due to Math.PI rotation y
+aWin1.rotation.y = Math.PI;
+scene.add(aWin1);
+
+const aWin2 = createArchedWindow(archW2.width, archW2.height);
+aWin2.position.set(-archW2.x, archW2.y, roomDepth / 2 - 0.05);
+aWin2.rotation.y = Math.PI;
+scene.add(aWin2);
+
+const aWin3 = createArchedWindow(archW3.width, archW3.height);
+aWin3.position.set(-archW3.x, archW3.y, roomDepth / 2 - 0.05);
+aWin3.rotation.y = Math.PI;
+scene.add(aWin3);
+
+function createIndustrialDoor(width, height) {
     const group = new THREE.Group();
-    const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3625, roughness: 0.8, metalness: 0.1 });
-    const paperMaterial = new THREE.MeshStandardMaterial({
-        color: 0xfffcf5, roughness: 0.8, metalness: 0.0, transparent: true, opacity: 0.6, side: THREE.DoubleSide
+    const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5, metalness: 0.8 });
+    const glassMaterial = new THREE.MeshStandardMaterial({
+        color: 0xaaaaaa, roughness: 0.1, metalness: 0.9, transparent: true, opacity: 0.4, side: THREE.DoubleSide
     });
-    const fw = 0.08, fd = 0.04;
+    const fw = 0.06, fd = 0.04;
 
     const topF = new THREE.Mesh(new THREE.BoxGeometry(width, fw, fd), frameMaterial);
     topF.position.y = height / 2 - fw / 2;
     group.add(topF);
 
-    const botF = new THREE.Mesh(new THREE.BoxGeometry(width, fw * 2, fd), frameMaterial);
-    botF.position.y = -height / 2 + fw;
+    const botF = new THREE.Mesh(new THREE.BoxGeometry(width, fw, fd), frameMaterial);
+    botF.position.y = -height / 2 + fw / 2;
     group.add(botF);
 
-    const leftF = new THREE.Mesh(new THREE.BoxGeometry(fw, height - fw * 3, fd), frameMaterial);
-    leftF.position.set(-width / 2 + fw / 2, -fw * 0.5, 0);
+    const leftF = new THREE.Mesh(new THREE.BoxGeometry(fw, height, fd), frameMaterial);
+    leftF.position.set(-width / 2 + fw / 2, 0, 0);
     group.add(leftF);
 
-    const rightF = new THREE.Mesh(new THREE.BoxGeometry(fw, height - fw * 3, fd), frameMaterial);
-    rightF.position.set(width / 2 - fw / 2, -fw * 0.5, 0);
+    const rightF = new THREE.Mesh(new THREE.BoxGeometry(fw, height, fd), frameMaterial);
+    rightF.position.set(width / 2 - fw / 2, 0, 0);
     group.add(rightF);
 
-    const cols = 3;
-    const rows = 8;
+    const cols = 2;
+    const rows = 3;
     const innerW = width - fw * 2;
-    const innerH = height - fw * 3;
+    const innerH = height - fw * 2;
 
     for (let c = 1; c < cols; c++) {
-        const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.02, innerH, fd + 0.01), frameMaterial);
-        vBar.position.set(-width / 2 + fw + (innerW / cols) * c, -fw * 0.5, 0);
+        const vBar = new THREE.Mesh(new THREE.BoxGeometry(0.03, innerH, fd + 0.01), frameMaterial);
+        vBar.position.set(-width / 2 + fw + (innerW / cols) * c, 0, 0);
         group.add(vBar);
     }
     for (let r = 1; r < rows; r++) {
-        const hBar = new THREE.Mesh(new THREE.BoxGeometry(innerW, 0.02, fd + 0.01), frameMaterial);
-        hBar.position.set(0, -height / 2 + fw * 2 + (innerH / rows) * r, 0);
+        const hBar = new THREE.Mesh(new THREE.BoxGeometry(innerW, 0.03, fd + 0.01), frameMaterial);
+        hBar.position.set(0, -height / 2 + fw + (innerH / rows) * r, 0);
         group.add(hBar);
     }
 
-    const paper = new THREE.Mesh(new THREE.PlaneGeometry(innerW, innerH), paperMaterial);
-    paper.position.y = -fw * 0.5;
-    group.add(paper);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(innerW, innerH), glassMaterial);
+    group.add(glass);
 
     group.traverse(child => {
         if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
@@ -825,30 +1017,16 @@ function createShojiDoor(width, height) {
 }
 
 const shojiPanelWidth = doorOpening.width / 2 + 0.04;
-const leftPanel = createShojiDoor(shojiPanelWidth, doorOpening.height);
-leftPanel.position.set(doorOpening.width / 4, doorOpening.height / 2, roomDepth / 2 - 0.02); // Slightly inset from wall
+const doubleDoorHeight = 3.9; // 5.5 total - 1.6 arch
+const leftPanel = createIndustrialDoor(shojiPanelWidth, doubleDoorHeight);
+leftPanel.position.set(doorOpening.width / 4, doubleDoorHeight / 2, roomDepth / 2 - 0.02); // Slightly inset from wall
 scene.add(leftPanel);
 
-const rightPanel = createShojiDoor(shojiPanelWidth, doorOpening.height);
-rightPanel.position.set(-doorOpening.width / 4 + 0.02, doorOpening.height / 2, roomDepth / 2 - 0.05); // Closed, slightly behind left panel to overlap
+const rightPanel = createIndustrialDoor(shojiPanelWidth, doubleDoorHeight);
+rightPanel.position.set(-doorOpening.width / 4 + 0.02, doubleDoorHeight / 2, roomDepth / 2 - 0.05); // Closed, slightly behind left panel to overlap
 scene.add(rightPanel);
 
-// Create an architectural wooden frame so the door is physically separated from the bare wall
-const entranceFrameMaterial = new THREE.MeshStandardMaterial({ color: 0x3d2b1f, roughness: 0.8, metalness: 0.05 });
-const frameThickness = 0.15;
-const frameDepth = 0.25;
-
-const topEntranceFrame = new THREE.Mesh(new THREE.BoxGeometry(doorOpening.width + frameThickness * 2, frameThickness, frameDepth), entranceFrameMaterial);
-topEntranceFrame.position.set(doorOpening.x, doorOpening.y + doorOpening.height / 2 + frameThickness / 2, roomDepth / 2 - 0.03);
-scene.add(topEntranceFrame);
-
-const leftEntranceFrame = new THREE.Mesh(new THREE.BoxGeometry(frameThickness, doorOpening.height, frameDepth), entranceFrameMaterial);
-leftEntranceFrame.position.set(doorOpening.x - doorOpening.width / 2 - frameThickness / 2, doorOpening.y, roomDepth / 2 - 0.03);
-scene.add(leftEntranceFrame);
-
-const rightEntranceFrame = new THREE.Mesh(new THREE.BoxGeometry(frameThickness, doorOpening.height, frameDepth), entranceFrameMaterial);
-rightEntranceFrame.position.set(doorOpening.x + doorOpening.width / 2 + frameThickness / 2, doorOpening.y, roomDepth / 2 - 0.03);
-scene.add(rightEntranceFrame);
+// Frame removed since we now use an arched transom built-in framework
 
 const leftWallWindow = createWindow(leftWindowSize.width, leftWindowSize.height, windowStyle);
 leftWallWindow.position.set(-roomWidth / 2 + 0.06, leftWindowCenter.y, leftWindowCenter.z);
@@ -860,193 +1038,24 @@ rightWallWindow.position.set(roomWidth / 2 - 0.06, rightWindowCenter.y, rightWin
 rightWallWindow.rotation.y = -Math.PI / 2;
 scene.add(rightWallWindow);
 
-// --- 3D FOREST OUTSIDE ---
-
-const forestGroup = new THREE.Group();
-
-// Create noisy green grass texture
-const grassCanvas = document.createElement('canvas');
-grassCanvas.width = 512;
-grassCanvas.height = 512;
-const grassCtx = grassCanvas.getContext('2d');
-grassCtx.fillStyle = '#1e3814'; // dark base
-grassCtx.fillRect(0, 0, 512, 512);
-
-// noise dots for grass blades
-for (let i = 0; i < 50000; i++) {
-    const x = Math.random() * 512;
-    const y = Math.random() * 512;
-    const isBright = Math.random() > 0.5;
-    grassCtx.fillStyle = isBright ? '#3b5f2b' : '#264219';
-    grassCtx.fillRect(x, y, 2, 4);
-}
-const grassTex = new THREE.CanvasTexture(grassCanvas);
-grassTex.wrapS = THREE.RepeatWrapping;
-grassTex.wrapT = THREE.RepeatWrapping;
-grassTex.repeat.set(150, 150);
-
-// Ground plane for the forest
-const forestGroundGeo = new THREE.PlaneGeometry(350, 350);
-const forestGroundMat = new THREE.MeshStandardMaterial({ 
-    map: grassTex,
-    color: 0x88aa77, // tint brightened for daylight
-    roughness: 1.0, 
-    metalness: 0.0 
-});
-const forestGround = new THREE.Mesh(forestGroundGeo, forestGroundMat);
-forestGround.rotation.x = -Math.PI / 2;
-forestGround.position.y = -2; // slightly below room floor
-forestGround.receiveShadow = true;
-forestGroup.add(forestGround);
-
-// Function to generate organic, fluffy pine layers
-function createOrganicPineLayer() {
-    const geo = new THREE.ConeGeometry(2.6, 5.5, 9, 3);
-    geo.translate(0, 5.5 / 2, 0); // shift origin to bottom
-    const pos = geo.attributes.position;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        // apply noise to vertices that aren't the exact top tip or center base
-        if (v.y > 0.1 && v.y < 5.4) {
-            const noise = Math.sin(v.x * 5.0) * Math.sin(v.y * 6.0) * Math.cos(v.z * 5.0);
-            const distXZ = Math.hypot(v.x, v.z);
-            if (distXZ > 0) { // Push out organically
-                v.x += (v.x / distXZ) * noise * 0.45;
-                v.z += (v.z / distXZ) * noise * 0.45;
-            }
-            v.y += (Math.random() - 0.5) * 0.3; // Slight random vertical variation
-        }
-        pos.setXYZ(i, v.x, v.y, v.z);
-    }
-    geo.computeVertexNormals();
-    return geo;
-}
-
-// Higher quality trees using organic geometry, 5 layers, shadows, and natural scatter
-const treeCount = 1500;
-const trunkGeo = new THREE.CylinderGeometry(0.25, 0.5, 3.5, 8);
-const leafGeo = createOrganicPineLayer();
-
-const trunkMat = new THREE.MeshStandardMaterial({ color: 0x211711, roughness: 0.95 });
-const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true }); 
-
-const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
-trunks.castShadow = true;
-trunks.receiveShadow = true;
-
-const leafLayers = [];
-for (let j = 0; j < 5; j++) {
-    const layerMesh = new THREE.InstancedMesh(leafGeo, leafMat, treeCount);
-    layerMesh.castShadow = true;
-    layerMesh.receiveShadow = true;
-    leafLayers.push(layerMesh);
-}
-
-const dummy = new THREE.Object3D();
-const colorHelper = new THREE.Color();
-
-for (let i = 0; i < treeCount; i++) {
-    // Generate trees in a radial ring to leave a large realistic open yard space
-    const radius = 30 + Math.pow(Math.random(), 0.8) * 110; // Slightly denser away from house
-    const angle = Math.random() * Math.PI * 2;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-
-    const scale = 0.7 + Math.random() * 1.6;
-    const trunkY = -2 + (3.5 * scale) / 2; 
-
-    // Add slight random tilt
-    const tiltX = (Math.random() - 0.5) * 0.15;
-    const tiltZ = (Math.random() - 0.5) * 0.15;
-    const rotationY = Math.random() * Math.PI * 2;
-
-    // Set Trunk
-    dummy.position.set(x, trunkY, z);
-    dummy.scale.set(scale, scale, scale);
-    dummy.rotation.set(tiltX, rotationY, tiltZ);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(i, dummy.matrix);
-
-    // Natural color variation for foliage
-    const hue = 0.30 + Math.random() * 0.05;    // Varied mossy greens
-    const sat = 0.35 + Math.random() * 0.25;    
-    const light = 0.06 + Math.random() * 0.09;  
-    colorHelper.setHSL(hue, sat, light);
-    
-    // 5 cascading layers of foliage per tree for dense realism
-    const layerSettings = [
-        { yOffset: 1.5, scaleMod: 1.0 },
-        { yOffset: 3.5, scaleMod: 0.85 },
-        { yOffset: 5.2, scaleMod: 0.7 },
-        { yOffset: 6.8, scaleMod: 0.5 },
-        { yOffset: 8.0, scaleMod: 0.35 }
-    ];
-
-    layerSettings.forEach((layer, index) => {
-        dummy.position.set(x, -2 + layer.yOffset * scale, z);
-        const lScale = scale * layer.scaleMod;
-        
-        // Randomize rotation slightly per layer to break up patterns
-        dummy.rotation.set(tiltX, rotationY + Math.random(), tiltZ);
-        dummy.scale.set(lScale, lScale * 0.9, lScale);
-        dummy.updateMatrix();
-        
-        leafLayers[index].setMatrixAt(i, dummy.matrix);
-        leafLayers[index].setColorAt(i, colorHelper);
-    });
-}
-
-forestGroup.add(trunks);
-leafLayers.forEach(layer => forestGroup.add(layer));
-
-// Add moonlight for the forest (CHANGED TO DAYTIME SUNLIGHT)
-const sunlight = new THREE.DirectionalLight(0xffa050, 4.0); // Warm fiery sunset daylight
-sunlight.position.set(-140, 8, 45); // Very low horizon angle through left window for sunset
-sunlight.castShadow = true;
-sunlight.shadow.camera.left = -30;
-sunlight.shadow.camera.right = 30;
-sunlight.shadow.camera.top = 30;
-sunlight.shadow.camera.bottom = -30;
-sunlight.shadow.camera.far = 250;
-sunlight.shadow.mapSize.set(2048, 2048);
-sunlight.target.position.set(0, 0, 0);
-scene.add(sunlight);
-scene.add(sunlight.target);
-
-// Visible physical sun mesh in the sky
-const sunMeshGeo = new THREE.SphereGeometry(6, 32, 32);
-const sunMeshMat = new THREE.MeshBasicMaterial({ color: 0xff6600, toneMapped: false });
-const sunObj = new THREE.Mesh(sunMeshGeo, sunMeshMat);
-sunObj.position.copy(sunlight.position);
-scene.add(sunObj);
-
-// Starry sky sphere enclosing the scene (CHANGED TO DAYTIME SKY)
-const skyGeo = new THREE.SphereGeometry(150, 16, 16);
-const skyMat = new THREE.MeshBasicMaterial({ color: 0xc46955, side: THREE.BackSide, toneMapped: false }); // Sunset sky color
-const sky = new THREE.Mesh(skyGeo, skyMat);
-forestGroup.add(sky);
-
-scene.add(forestGroup);
-
 // Ceiling
-const ceilingTextures = createCeilingTextures();
-ceilingTextures.map.wrapS = THREE.RepeatWrapping;
-ceilingTextures.map.wrapT = THREE.RepeatWrapping;
-ceilingTextures.map.repeat.set(1.2, 1.2);
-ceilingTextures.bump.wrapS = THREE.RepeatWrapping;
-ceilingTextures.bump.wrapT = THREE.RepeatWrapping;
-ceilingTextures.bump.repeat.set(1.2, 1.2);
+const ceilingTextures = createBurntCementTextures(1024);
+ceilingTextures.map.wrapS = THREE.MirroredRepeatWrapping;
+ceilingTextures.map.wrapT = THREE.MirroredRepeatWrapping;
+ceilingTextures.map.repeat.set(1, 1);
+ceilingTextures.bump.wrapS = THREE.MirroredRepeatWrapping;
+ceilingTextures.bump.wrapT = THREE.MirroredRepeatWrapping;
+ceilingTextures.bump.repeat.set(1, 1);
 ceilingTextures.map.anisotropy = maxAnisotropy;
 ceilingTextures.bump.anisotropy = maxAnisotropy;
 
 const ceilingMaterial = new THREE.MeshStandardMaterial({
     map: ceilingTextures.map,
     bumpMap: ceilingTextures.bump,
-    bumpScale: 0.02,
-    roughness: 0.96,
-    metalness: 0.0,
-    color: 0xf6f3ec,
+    bumpScale: 0.08,
+    roughness: 0.8,
+    metalness: 0.2,
+    color: 0x999999,
     side: THREE.DoubleSide
 });
 const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomDepth + 10), ceilingMaterial);
@@ -1055,6 +1064,17 @@ ceiling.position.y = roomHeight / 2;
 ceiling.receiveShadow = true;
 ceiling.castShadow = true;
 scene.add(ceiling);
+
+// Industrial Beams
+const beamGeo = new THREE.BoxGeometry(0.5, 0.6, roomDepth);
+const beamMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6, metalness: 0.5 });
+for (let x = -roomWidth / 2 + 3; x < roomWidth / 2; x += 4) {
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.position.set(x, roomHeight / 2 - 0.3, 0);
+    beam.castShadow = true;
+    beam.receiveShadow = true;
+    scene.add(beam);
+}
 
 const bed = new THREE.Group();
 
